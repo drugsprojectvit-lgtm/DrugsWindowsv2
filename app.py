@@ -1,7 +1,7 @@
 # app.py
 """
 Main Gradio interface for Protein Structure Finder & Analyzer
-Cleaned version: Ligand Analysis removed.
+Updated version: Included Ligand Chemical Class Analysis.
 """
 
 import os
@@ -13,7 +13,7 @@ from config import current_pdb_info
 from ramachandran import run_ramplot
 from prankweb import run_prankweb_prediction
 from protein_prep import prepare_protein_meeko
-# Ligand Analysis module import removed
+from ligand_analysis import run_ligand_classification  # New Import
 from docking import run_molecular_docking
 from admet_analysis import run_admet_prediction
 from utils import map_disease_to_protein, find_best_pdb_structure
@@ -94,6 +94,28 @@ def process_disease(user_input: str):
             structure_viewer: gr.update(value=""),
             download_file: gr.update(value=None),
             search_status: gr.update(value=f"❌ Error: {str(e)}", visible=True)
+        }
+
+def process_ligand_analysis():
+    """Logic for the new Ligand Analysis tab."""
+    try:
+        df, csv_path = run_ligand_classification("pdbqt")
+        if df is None:
+            return {
+                ligand_status: gr.update(value=f"❌ {csv_path}", visible=True),
+                ligand_table: gr.update(visible=False),
+                ligand_csv_download: gr.update(visible=False)
+            }
+        return {
+            ligand_status: gr.update(value="✅ Chemical Class Analysis Complete", visible=True),
+            ligand_table: gr.update(value=df, visible=True),
+            ligand_csv_download: gr.update(value=csv_path, visible=True)
+        }
+    except Exception as e:
+        return {
+            ligand_status: gr.update(value=f"❌ Analysis Error: {str(e)}", visible=True),
+            ligand_table: gr.update(visible=False),
+            ligand_csv_download: gr.update(visible=False)
         }
 
 def filter_poses_by_chain(chain_selected, summary_df):
@@ -265,22 +287,31 @@ with gr.Blocks(theme=gr.themes.Soft(), title="Protein Structure Finder & Analyze
                 prepared_download = gr.File(label="Download PDBQT")
             with gr.Row():
                 prev_btn_2 = gr.Button("← Previous", variant="secondary")
-                # Updated Next button to skip Ligand Analysis
                 next_btn_2 = gr.Button("Next: Binding Site Prediction →", variant="primary")
 
-        # Tab 3: PrankWeb (Renumbered from 4)
+        # Tab 3: PrankWeb
         with gr.Tab("🎯 Binding Site Prediction", id=3):
             gr.Markdown("### Active Site Prediction")
             prankweb_btn = gr.Button("🔮 Run PrankWeb", variant="secondary")
             prankweb_status = gr.HTML(visible=False)
             prankweb_results = gr.Dataframe(label="Results", visible=False)
             with gr.Row():
-                # Previous button goes back to Protein Prep (ID 2)
                 prev_btn_3 = gr.Button("← Previous", variant="secondary")
-                next_btn_3 = gr.Button("Next: Docking →", variant="primary")
+                next_btn_3 = gr.Button("Next: Ligand Analysis →", variant="primary")
 
-        # Tab 4: Docking (Renumbered from 5)
-        with gr.Tab("🚀 Molecular Docking", id=4):
+        # Tab 4: Ligand Analysis (NEW)
+        with gr.Tab("🧪 Ligand Analysis", id=4):
+            gr.Markdown("### Chemical Class & Complexity Analysis")
+            ligand_analyze_btn = gr.Button("🔍 Analyze Ligands", variant="secondary")
+            ligand_status = gr.Markdown(visible=False)
+            ligand_table = gr.Dataframe(label="Ligand Properties", visible=False)
+            ligand_csv_download = gr.File(label="Download Classification Report", visible=False)
+            with gr.Row():
+                prev_btn_lig = gr.Button("← Previous", variant="secondary")
+                next_btn_lig = gr.Button("Next: Docking →", variant="primary")
+
+        # Tab 5: Docking
+        with gr.Tab("🚀 Molecular Docking", id=5):
             gr.Markdown("### Molecular Docking (Multi-Chain)")
             docking_btn = gr.Button("Run Docking (All Chains)", variant="secondary")
             docking_status = gr.HTML(visible=False)
@@ -298,8 +329,8 @@ with gr.Blocks(theme=gr.themes.Soft(), title="Protein Structure Finder & Analyze
                 prev_btn_4 = gr.Button("← Previous", variant="secondary")
                 next_btn_4 = gr.Button("Next: ADMET →", variant="primary")
 
-        # Tab 5: ADMET (Renumbered from 6)
-        with gr.Tab("🧪 ADMET Analysis", id=5):
+        # Tab 6: ADMET
+        with gr.Tab("🧪 ADMET Analysis", id=6):
             gr.Markdown("### Drug-likeness & Safety")
             admet_btn = gr.Button("Run ADMET", variant="secondary")
             admet_status = gr.Markdown(visible=False)
@@ -316,19 +347,22 @@ with gr.Blocks(theme=gr.themes.Soft(), title="Protein Structure Finder & Analyze
     next_btn_1.click(lambda: gr.Tabs(selected=2), None, tabs)
     
     prev_btn_2.click(lambda: gr.Tabs(selected=1), None, tabs)
-    # Prep Next button now jumps to ID 3 (PrankWeb), skipping Ligand Analysis
     next_btn_2.click(lambda: gr.Tabs(selected=3), None, tabs) 
     
-    # PrankWeb Navigation
     prev_btn_3.click(lambda: gr.Tabs(selected=2), None, tabs)
-    next_btn_3.click(lambda: gr.Tabs(selected=4), None, tabs)
+    next_btn_3.click(lambda: gr.Tabs(selected=4), None, tabs) # PrankWeb -> Ligand
+
+    # Ligand Analysis Events
+    prev_btn_lig.click(lambda: gr.Tabs(selected=3), None, tabs)
+    next_btn_lig.click(lambda: gr.Tabs(selected=5), None, tabs)
+    ligand_analyze_btn.click(fn=process_ligand_analysis, inputs=[], outputs={ligand_status, ligand_table, ligand_csv_download})
     
     # Docking Navigation
-    prev_btn_4.click(lambda: gr.Tabs(selected=3), None, tabs)
-    next_btn_4.click(lambda: gr.Tabs(selected=5), None, tabs)
+    prev_btn_4.click(lambda: gr.Tabs(selected=4), None, tabs) # Docking -> Ligand
+    next_btn_4.click(lambda: gr.Tabs(selected=6), None, tabs)
     
     # ADMET Navigation
-    prev_btn_5.click(lambda: gr.Tabs(selected=4), None, tabs)
+    prev_btn_5.click(lambda: gr.Tabs(selected=5), None, tabs)
     next_btn_5.click(lambda: gr.Tabs(selected=0), None, tabs)
 
     # Core Logic Connections
