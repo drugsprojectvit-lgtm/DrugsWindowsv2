@@ -1,7 +1,7 @@
 # app.py
 """
 Main Gradio interface for Protein Structure Finder & Analyzer
-Includes Ligand Sanity Check & Analysis.
+Cleaned version: Ligand Analysis removed.
 """
 
 import os
@@ -13,7 +13,7 @@ from config import current_pdb_info
 from ramachandran import run_ramplot
 from prankweb import run_prankweb_prediction
 from protein_prep import prepare_protein_meeko
-from ligand_analysis import run_ligand_analysis
+# Ligand Analysis module import removed
 from docking import run_molecular_docking
 from admet_analysis import run_admet_prediction
 from utils import map_disease_to_protein, find_best_pdb_structure
@@ -95,20 +95,6 @@ def process_disease(user_input: str):
             download_file: gr.update(value=None),
             search_status: gr.update(value=f"❌ Error: {str(e)}", visible=True)
         }
-
-def visualize_single_ligand(pdb_path):
-    """Visualizes a single ligand from the analysis tab."""
-    if not pdb_path or not os.path.exists(pdb_path) or pdb_path == "N/A":
-        return "⚠️ Ligand file not available."
-    
-    try:
-        with open(pdb_path, 'r') as f:
-            ligand_content = f.read()
-        
-        name = os.path.basename(pdb_path)
-        return show_structure(protein_text=None, ligand_text=ligand_content, protein_name=name)
-    except:
-        return "Error loading ligand."
 
 def filter_poses_by_chain(chain_selected, summary_df):
     """Updates the Pose dropdown based on the selected Chain."""
@@ -233,7 +219,6 @@ def process_admet():
         }
 
 # UI Layout
-# FIXED: title and theme belong in Blocks(), not launch()
 with gr.Blocks(theme=gr.themes.Soft(), title="Protein Structure Finder & Analyzer") as demo:
     
     gr.HTML("<div class='main-header'><h1>🧬 Protein Structure Finder & Analyzer</h1></div>")
@@ -280,47 +265,22 @@ with gr.Blocks(theme=gr.themes.Soft(), title="Protein Structure Finder & Analyze
                 prepared_download = gr.File(label="Download PDBQT")
             with gr.Row():
                 prev_btn_2 = gr.Button("← Previous", variant="secondary")
-                next_btn_2 = gr.Button("Next: Ligand Analysis →", variant="primary")
+                # Updated Next button to skip Ligand Analysis
+                next_btn_2 = gr.Button("Next: Binding Site Prediction →", variant="primary")
 
-        # Tab 3: Ligand Analysis (NEW)
-        with gr.Tab("🧪 Ligand Analysis", id=3):
-            gr.Markdown("""
-            ### Ligand Sanity Check & Analysis
-            * **Properties:** MW, Charge, Rotatable Bonds.
-            * **Classification:** Fragment vs Small Molecule vs Macrocycle.
-            * **Redundancy:** Detection of duplicate structures and shared scaffolds.
-            * **Method:** OpenBabel SMILES extraction (Lenient Mode) for robust parsing.
-            """)
-            
-            analyze_ligand_btn = gr.Button("Run Ligand Sanity Check", variant="secondary")
-            ligand_status = gr.HTML(visible=False)
-            
-            with gr.Row():
-                with gr.Column(scale=3):
-                    ligand_table = gr.Dataframe(label="Ligand Metrics", visible=False, interactive=False)
-                with gr.Column(scale=1):
-                    ligand_selector = gr.Dropdown(label="Visualize Ligand", choices=[], visible=False)
-                    ligand_vis_btn = gr.Button("Show 3D", size="sm")
-                    ligand_download = gr.File(label="Download Report", visible=False)
-            
-            ligand_3d_viewer = gr.HTML(label="Ligand 3D Viewer")
-
-            with gr.Row():
-                prev_btn_3 = gr.Button("← Previous", variant="secondary")
-                next_btn_3 = gr.Button("Next: Binding Site Prediction →", variant="primary")
-
-        # Tab 4: PrankWeb
-        with gr.Tab("🎯 Binding Site Prediction", id=4):
+        # Tab 3: PrankWeb (Renumbered from 4)
+        with gr.Tab("🎯 Binding Site Prediction", id=3):
             gr.Markdown("### Active Site Prediction")
             prankweb_btn = gr.Button("🔮 Run PrankWeb", variant="secondary")
             prankweb_status = gr.HTML(visible=False)
             prankweb_results = gr.Dataframe(label="Results", visible=False)
             with gr.Row():
-                prev_btn_4 = gr.Button("← Previous", variant="secondary")
-                next_btn_4 = gr.Button("Next: Docking →", variant="primary")
+                # Previous button goes back to Protein Prep (ID 2)
+                prev_btn_3 = gr.Button("← Previous", variant="secondary")
+                next_btn_3 = gr.Button("Next: Docking →", variant="primary")
 
-        # Tab 5: Docking
-        with gr.Tab("🚀 Molecular Docking", id=5):
+        # Tab 4: Docking (Renumbered from 5)
+        with gr.Tab("🚀 Molecular Docking", id=4):
             gr.Markdown("### Molecular Docking (Multi-Chain)")
             docking_btn = gr.Button("Run Docking (All Chains)", variant="secondary")
             docking_status = gr.HTML(visible=False)
@@ -335,19 +295,19 @@ with gr.Blocks(theme=gr.themes.Soft(), title="Protein Structure Finder & Analyze
                 with gr.Column(scale=1):
                     interaction_image_viewer = gr.Image(label="2D Interaction Map", type="filepath", visible=True)
             with gr.Row():
-                prev_btn_5 = gr.Button("← Previous", variant="secondary")
-                next_btn_5 = gr.Button("Next: ADMET →", variant="primary")
+                prev_btn_4 = gr.Button("← Previous", variant="secondary")
+                next_btn_4 = gr.Button("Next: ADMET →", variant="primary")
 
-        # Tab 6: ADMET
-        with gr.Tab("🧪 ADMET Analysis", id=6):
+        # Tab 5: ADMET (Renumbered from 6)
+        with gr.Tab("🧪 ADMET Analysis", id=5):
             gr.Markdown("### Drug-likeness & Safety")
             admet_btn = gr.Button("Run ADMET", variant="secondary")
             admet_status = gr.Markdown(visible=False)
             admet_download = gr.File(visible=False)
             admet_table = gr.Dataframe(visible=False)
             with gr.Row():
-                prev_btn_6 = gr.Button("← Previous", variant="secondary")
-                next_btn_6 = gr.Button("Back to Start", variant="primary")
+                prev_btn_5 = gr.Button("← Previous", variant="secondary")
+                next_btn_5 = gr.Button("Back to Start", variant="primary")
 
     # Events
     next_btn_0.click(lambda: gr.Tabs(selected=1), None, tabs)
@@ -356,34 +316,20 @@ with gr.Blocks(theme=gr.themes.Soft(), title="Protein Structure Finder & Analyze
     next_btn_1.click(lambda: gr.Tabs(selected=2), None, tabs)
     
     prev_btn_2.click(lambda: gr.Tabs(selected=1), None, tabs)
+    # Prep Next button now jumps to ID 3 (PrankWeb), skipping Ligand Analysis
     next_btn_2.click(lambda: gr.Tabs(selected=3), None, tabs) 
     
-    # Ligand Tab Events
+    # PrankWeb Navigation
     prev_btn_3.click(lambda: gr.Tabs(selected=2), None, tabs)
-    next_btn_3.click(lambda: gr.Tabs(selected=4), None, tabs) 
+    next_btn_3.click(lambda: gr.Tabs(selected=4), None, tabs)
     
-    analyze_ligand_btn.click(
-        fn=run_ligand_analysis,
-        inputs=[],
-        outputs=[ligand_status, ligand_table, ligand_selector, ligand_download]
-    )
-    
-    # Use the selector change to auto-update (or button)
-    ligand_vis_btn.click(
-        fn=visualize_single_ligand,
-        inputs=[ligand_selector],
-        outputs=[ligand_3d_viewer]
-    )
-    
-    # Rest of Navigation
+    # Docking Navigation
     prev_btn_4.click(lambda: gr.Tabs(selected=3), None, tabs)
     next_btn_4.click(lambda: gr.Tabs(selected=5), None, tabs)
     
+    # ADMET Navigation
     prev_btn_5.click(lambda: gr.Tabs(selected=4), None, tabs)
-    next_btn_5.click(lambda: gr.Tabs(selected=6), None, tabs)
-    
-    prev_btn_6.click(lambda: gr.Tabs(selected=5), None, tabs)
-    next_btn_6.click(lambda: gr.Tabs(selected=0), None, tabs)
+    next_btn_5.click(lambda: gr.Tabs(selected=0), None, tabs)
 
     # Core Logic Connections
     search_btn.click(process_disease, inputs=[disease_input], outputs={info_box, structure_viewer, download_file, search_status})
