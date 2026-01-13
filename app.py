@@ -1,7 +1,7 @@
 # app.py
 """
 Main Gradio interface for Protein Structure Finder & Analyzer
-Updated version: Included Ligand Chemical Class Analysis.
+Updated version: Ligand Analysis uses Converted PDBs for Dropdown and Visualization.
 """
 
 import os
@@ -13,7 +13,7 @@ from config import current_pdb_info
 from ramachandran import run_ramplot
 from prankweb import run_prankweb_prediction
 from protein_prep import prepare_protein_meeko
-from ligand_analysis import run_ligand_classification  # New Import
+from ligand_analysis import run_ligand_classification
 from docking import run_molecular_docking
 from admet_analysis import run_admet_prediction
 from utils import map_disease_to_protein, find_best_pdb_structure
@@ -97,26 +97,64 @@ def process_disease(user_input: str):
         }
 
 def process_ligand_analysis():
-    """Logic for the new Ligand Analysis tab."""
+    """Logic for the new Ligand Analysis tab with dropdown update."""
     try:
         df, csv_path = run_ligand_classification("pdbqt")
         if df is None:
             return {
                 ligand_status: gr.update(value=f"❌ {csv_path}", visible=True),
                 ligand_table: gr.update(visible=False),
-                ligand_csv_download: gr.update(visible=False)
+                ligand_csv_download: gr.update(visible=False),
+                ligand_selector: gr.update(visible=False, choices=[])
             }
+        
+        # Extract ligand filenames from the 'Converted_PDB' column
+        # This ensures the dropdown shows .pdb files
+        if 'Converted_PDB' in df.columns:
+            ligand_files = df['Converted_PDB'].dropna().tolist()
+        else:
+            ligand_files = []
+        
         return {
-            ligand_status: gr.update(value="✅ Chemical Class Analysis Complete", visible=True),
+            ligand_status: gr.update(value="✅ Chemical Class Analysis Complete (Converted to PDB)", visible=True),
             ligand_table: gr.update(value=df, visible=True),
-            ligand_csv_download: gr.update(value=csv_path, visible=True)
+            ligand_csv_download: gr.update(value=csv_path, visible=True),
+            ligand_selector: gr.update(visible=True, choices=ligand_files, value=ligand_files[0] if ligand_files else None)
         }
     except Exception as e:
         return {
             ligand_status: gr.update(value=f"❌ Analysis Error: {str(e)}", visible=True),
             ligand_table: gr.update(visible=False),
-            ligand_csv_download: gr.update(visible=False)
+            ligand_csv_download: gr.update(visible=False),
+            ligand_selector: gr.update(visible=False, choices=[])
         }
+
+def visualize_ligand_only(ligand_file):
+    """Visualizes a single ligand, reading from the converted PDB folder."""
+    if not ligand_file:
+        return ""
+    
+    # ligand_file is now a .pdb name from the dropdown (e.g. "ligand_1.pdb")
+    # We access the 'ligand_pdb' directory directly
+    ligand_path = os.path.join("ligand_pdb", ligand_file)
+    
+    if not os.path.exists(ligand_path):
+        return f"❌ Converted PDB file not found at: {ligand_path}"
+    
+    try:
+        with open(ligand_path, 'r') as f:
+            ligand_content = f.read()
+            
+        # Pass None as protein_text to visualize only the ligand
+        html = show_structure(
+            protein_text=None,
+            ligand_text=ligand_content,
+            pdb_id="Ligand",
+            protein_name=ligand_file
+        )
+        return html
+    except Exception as e:
+        return f"❌ Visualization Error: {str(e)}"
 
 def filter_poses_by_chain(chain_selected, summary_df):
     """Updates the Pose dropdown based on the selected Chain."""
@@ -306,6 +344,15 @@ with gr.Blocks(theme=gr.themes.Soft(), title="Protein Structure Finder & Analyze
             ligand_status = gr.Markdown(visible=False)
             ligand_table = gr.Dataframe(label="Ligand Properties", visible=False)
             ligand_csv_download = gr.File(label="Download Classification Report", visible=False)
+            
+            # New 3D Visualization Section
+            gr.Markdown("### 3D Ligand Visualization (PDB format)")
+            with gr.Row():
+                with gr.Column(scale=1):
+                    ligand_selector = gr.Dropdown(label="Select Ligand to View", choices=[], interactive=True, visible=False)
+                with gr.Column(scale=2):
+                    ligand_viewer = gr.HTML(label="Ligand 3D Viewer")
+            
             with gr.Row():
                 prev_btn_lig = gr.Button("← Previous", variant="secondary")
                 next_btn_lig = gr.Button("Next: Docking →", variant="primary")
@@ -355,7 +402,8 @@ with gr.Blocks(theme=gr.themes.Soft(), title="Protein Structure Finder & Analyze
     # Ligand Analysis Events
     prev_btn_lig.click(lambda: gr.Tabs(selected=3), None, tabs)
     next_btn_lig.click(lambda: gr.Tabs(selected=5), None, tabs)
-    ligand_analyze_btn.click(fn=process_ligand_analysis, inputs=[], outputs={ligand_status, ligand_table, ligand_csv_download})
+    ligand_analyze_btn.click(fn=process_ligand_analysis, inputs=[], outputs={ligand_status, ligand_table, ligand_csv_download, ligand_selector})
+    ligand_selector.change(fn=visualize_ligand_only, inputs=[ligand_selector], outputs=[ligand_viewer])
     
     # Docking Navigation
     prev_btn_4.click(lambda: gr.Tabs(selected=4), None, tabs) # Docking -> Ligand

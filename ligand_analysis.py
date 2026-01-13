@@ -1,6 +1,7 @@
 # ligand_analysis.py
 import os
 import pandas as pd
+import subprocess
 
 def analyze_pdbqt_manual(pdbqt_path):
     """Parses PDBQT to calculate Molecular Weight and Rotatable Bonds."""
@@ -38,10 +39,33 @@ def analyze_pdbqt_manual(pdbqt_path):
 
     return {"MW": total_mass, "RotBonds": rotatable_bonds}
 
+def convert_pdbqt_to_pdb(pdbqt_path, output_folder):
+    """Converts a PDBQT file to PDB format using obabel."""
+    try:
+        base_name = os.path.basename(pdbqt_path)
+        pdb_name = base_name.replace(".pdbqt", ".pdb")
+        output_path = os.path.join(output_folder, pdb_name)
+        
+        # subprocess command for obabel
+        subprocess.run(
+            ["obabel", "-ipdbqt", pdbqt_path, "-opdb", "-O", output_path],
+            check=True,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL
+        )
+        return pdb_name
+    except Exception as e:
+        print(f"Error converting {pdbqt_path}: {e}")
+        return None
+
 def run_ligand_classification(ligand_folder="pdbqt"):
-    """Analyzes all PDBQT files in a folder and returns a DataFrame and CSV path."""
+    """Analyzes PDBQT files and converts them to PDB for visualization."""
     if not os.path.exists(ligand_folder):
         return None, "Folder not found."
+
+    # Create folder for converted PDBs
+    pdb_out_folder = "ligand_pdb"
+    os.makedirs(pdb_out_folder, exist_ok=True)
 
     results = []
     pdbqt_files = [f for f in os.listdir(ligand_folder) if f.endswith(".pdbqt")]
@@ -51,9 +75,14 @@ def run_ligand_classification(ligand_folder="pdbqt"):
 
     for file in pdbqt_files:
         path = os.path.join(ligand_folder, file)
+        
+        # 1. Analyze properties (using original PDBQT)
         props = analyze_pdbqt_manual(path)
         mw = props['MW']
         rb = props['RotBonds']
+        
+        # 2. Convert to PDB for visualization
+        converted_pdb = convert_pdbqt_to_pdb(path, pdb_out_folder)
         
         # Logic
         if mw < 300:
@@ -71,6 +100,7 @@ def run_ligand_classification(ligand_folder="pdbqt"):
 
         results.append({
             "Ligand": file,
+            "Converted_PDB": converted_pdb,
             "MW (Da)": round(mw, 2),
             "Rotatable Bonds": rb,
             "Category": cat,

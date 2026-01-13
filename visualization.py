@@ -1,24 +1,19 @@
 import base64
 import json
-import os
 from IPython.display import HTML
 
-def show_structure(protein_text: str, ligand_text: str = None, pdb_id: str = "Docking Result", protein_name: str = "") -> str:
+def show_structure(protein_text: str = None, ligand_text: str = None, pdb_id: str = "Structure", protein_name: str = "") -> str:
     """
-    Robust 3D visualization supporting Overlay.
-    
-    Args:
-        protein_text: The string content of the protein PDB (Rendered as Cartoon).
-        ligand_text: (Optional) The string content of the ligand PDB (Rendered as Magenta Sticks).
-        pdb_id: Title to display.
-        protein_name: Subtitle to display.
+    Robust 3D visualization supporting:
+    1. Protein Only
+    2. Protein + Ligand (Overlay)
+    3. Ligand Only (Standalone)
     """
     
-    # 1. Safely serialize the protein text
+    # 1. Safely serialize inputs
+    # If None is passed, json.dumps(None) produces the string "null" (without quotes in JS), which is perfect.
     prot_json = json.dumps(protein_text)
-    
-    # 2. Safely serialize the ligand text (if it exists)
-    lig_json = json.dumps(ligand_text) if ligand_text else "null"
+    lig_json = json.dumps(ligand_text)
     
     html_content = f"""
     <!DOCTYPE html>
@@ -88,45 +83,45 @@ def show_structure(protein_text: str, ligand_text: str = None, pdb_id: str = "Do
                     var config = {{ backgroundColor: 'white' }};
                     var viewer = $3Dmol.createViewer(element, config);
 
-                    // --- MODEL 0: PROTEIN ---
                     var proteinData = {prot_json};
-                    if (!proteinData) throw new Error("Protein data is empty.");
-                    
-                    viewer.addModel(proteinData, "pdb");
-                    
-                    // Style Model 0 (Protein)
-                    // We specifically target model 0 to keep styles separate
-                    viewer.setStyle(
-                        {{model: 0}}, 
-                        {{cartoon: {{color: 'spectrum'}}}}
-                    );
-                    
-                    // Optional: Show existing hetatoms in protein file as faint sticks
-                    viewer.addStyle(
-                        {{model: 0, hetflag: true}}, 
-                        {{stick: {{radius: 0.1, color: 'lightgray'}}}}
-                    );
-
-                    // --- MODEL 1: LIGAND (OPTIONAL) ---
                     var ligandData = {lig_json};
-                    
-                    if (ligandData) {{
-                        // Case A: Dual File Overlay
-                        viewer.addModel(ligandData, "pdb");
-                        
-                        // Style Model 1 (Ligand)
-                        // Target model 1 specifically
+                    var hasModel = false;
+
+                    // --- ADD PROTEIN (If exists) ---
+                    if (proteinData) {{
+                        viewer.addModel(proteinData, "pdb");
+                        // Style last added model (Protein)
                         viewer.setStyle(
-                            {{model: 1}}, 
+                            {{model: -1}}, 
+                            {{cartoon: {{color: 'spectrum'}}}}
+                        );
+                        // Optional: Show existing hetatoms in protein file as faint sticks
+                        viewer.addStyle(
+                            {{model: -1, hetflag: true}}, 
+                            {{stick: {{radius: 0.1, color: 'lightgray'}}}}
+                        );
+                        hasModel = true;
+                    }}
+
+                    // --- ADD LIGAND (If exists) ---
+                    if (ligandData) {{
+                        viewer.addModel(ligandData, "pdb");
+                        // Style last added model (Ligand)
+                        viewer.setStyle(
+                            {{model: -1}}, 
                             {{stick: {{colorscheme: 'magentaCarbon', radius: 0.4}}}}
                         );
-                    }} else {{
-                        // Case B: Single File Fallback
-                        // If no separate ligand file is provided, look for ligands INSIDE the protein file
+                        hasModel = true;
+                    }} else if (proteinData) {{
+                        // Fallback: If no separate ligand file, look for ligands INSIDE protein
                         viewer.addStyle(
                             {{resn: ["UNL", "LIG", "DRG", "UNK"]}}, 
                             {{stick: {{colorscheme: 'magentaCarbon', radius: 0.4}}}}
                         );
+                    }}
+
+                    if (!hasModel) {{
+                        throw new Error("No protein or ligand data provided.");
                     }}
 
                     // 4. Render
@@ -146,10 +141,3 @@ def show_structure(protein_text: str, ligand_text: str = None, pdb_id: str = "Do
     iframe = f'<iframe src="data:text/html;base64,{b64}" width="100%" height="500" frameborder="0" style="border: 1px solid #ccc; border-radius: 8px;"></iframe>'
     
     return iframe
-
-# --- HELPER FUNCTION TO READ FILES ---
-def view_docking_files(protein_path, ligand_path):
-    """Reads files and calls show_structure"""
-    with open(protein_path, 'r') as f: p_text = f.read()
-    with open(ligand_path, 'r') as f: l_text = f.read()
-    return HTML(show_structure(p_text, l_text))
