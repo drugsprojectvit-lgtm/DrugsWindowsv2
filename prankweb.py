@@ -3,8 +3,10 @@ PrankWeb (Local P2Rank) and Fpocket binding site prediction module
 """
 
 import os
+import shutil  # Added for folder deletion
 import subprocess
 import glob
+import re
 import pandas as pd
 import gradio as gr
 from pathlib import Path
@@ -45,10 +47,82 @@ def to_wsl_path(win_path):
         # Fallback if path parsing fails, though Path objects usually handle this well
         return str(win_path).replace('\\', '/')
 
+def calculate_pocket_centers(output_dir):
+    """
+    Scans the fpocket output directory (specifically the 'pockets' subdir)
+    for 'pocket*_atm.pdb' files, calculates the geometric center (centroid),
+    and returns a formatted string report.
+    """
+    # FIX: Fpocket creates a 'pockets' subdirectory inside the output folder.
+    # We must look there first.
+    pockets_dir = output_dir / "pockets"
+    
+    if pockets_dir.exists():
+        search_dir = pockets_dir
+        location_msg = f"Scanning directory: {pockets_dir}"
+    else:
+        # Fallback to root if 'pockets' doesn't exist (older versions)
+        search_dir = output_dir
+        location_msg = f"Scanning directory: {output_dir} ('pockets' subdir not found)"
+
+    report_lines = ["", "="*50, "📍 CALCULATED POCKET CENTERS (XYZ)", location_msg, "="*50]
+    
+    # Find all pocket pdb files (e.g., pocket1_atm.pdb)
+    pocket_files = list(search_dir.glob("pocket*_atm.pdb"))
+    
+    # Sort them naturally (1, 2, 10 instead of 1, 10, 2)
+    def natural_sort_key(p):
+        # Extract the number from filename 'pocket12_atm.pdb'
+        match = re.search(r'pocket(\d+)_atm', p.name)
+        return int(match.group(1)) if match else 0
+
+    pocket_files.sort(key=natural_sort_key)
+
+    if not pocket_files:
+        report_lines.append("❌ No 'pocket*_atm.pdb' files found in the scan directory.")
+        report_lines.append(f"Contents of {search_dir.name}: {os.listdir(search_dir) if search_dir.exists() else 'Directory does not exist'}")
+        return "\n".join(report_lines)
+
+    for p_file in pocket_files:
+        x_sum, y_sum, z_sum, count = 0.0, 0.0, 0.0, 0
+        try:
+            with open(p_file, 'r') as f:
+                for line in f:
+                    if line.startswith("ATOM") or line.startswith("HETATM"):
+                        # PDB format: X is 30-38, Y is 38-46, Z is 46-54
+                        try:
+                            x = float(line[30:38])
+                            y = float(line[38:46])
+                            z = float(line[46:54])
+                            x_sum += x
+                            y_sum += y
+                            z_sum += z
+                            count += 1
+                        except ValueError:
+                            continue
+            
+            if count > 0:
+                cx = x_sum / count
+                cy = y_sum / count
+                cz = z_sum / count
+                # Extract simple name like "Pocket 1"
+                match = re.search(r'pocket(\d+)_atm', p_file.name)
+                pocket_num = match.group(1) if match else "Unknown"
+                
+                # Format: Pocket 1:  X= 12.345  Y= 45.678  Z= -9.123
+                report_lines.append(f"Pocket {pocket_num:<3}:  X={cx:8.3f}  Y={cy:8.3f}  Z={cz:8.3f}")
+            else:
+                report_lines.append(f"{p_file.name}: Empty or invalid atoms.")
+
+        except Exception as e:
+            report_lines.append(f"{p_file.name}: Error reading file ({str(e)})")
+
+    return "\n".join(report_lines)
+
 def run_fpocket_wsl(abs_input_path):
     """
     Runs fpocket via WSL on the specific PDB file.
-    Returns the content of the _info.txt file if successful, or an error message.
+    Returns the content of the _info.txt file PLUS calculated XYZ coordinates.
     """
     abs_input = Path(abs_input_path).resolve()
     
@@ -78,19 +152,27 @@ def run_fpocket_wsl(abs_input_path):
         )
 
         if expected_output_dir.exists():
-            # Look for the info.txt file
-            # usually named: [filename]_info.txt inside the [filename]_out folder
+            # 1. Read the standard Info file
+            # This file is usually in the root of the output folder (not in pockets subdir)
             info_file_name = f"{abs_input.stem}_info.txt"
             info_file_path = expected_output_dir / info_file_name
             
+            main_content = ""
             if info_file_path.exists():
                 with open(info_file_path, 'r') as f:
-                    content = f.read()
-                return content
+                    main_content = f.read()
             else:
-                return f"⚠️ Fpocket ran, but info file not found at: {info_file_path}\nOutput dir content: {os.listdir(expected_output_dir)}"
+                main_content = f"⚠️ Fpocket ran, but info file not found at: {info_file_path}\n"
+            
+            # 2. Calculate XYZ Coordinates from generated PDBs (inside 'pockets' folder)
+            coordinates_report = calculate_pocket_centers(expected_output_dir)
+            
+            # Combine them
+            full_report = main_content + "\n" + coordinates_report
+            return full_report
+
         else:
-            return f"⚠️ Fpocket command finished, but output folder not found.\nWSL Stdout: {result.stdout}"
+            return f"⚠️ Fpocket command finished, but output folder not found.\nExpected: {expected_output_dir}\nWSL Stdout: {result.stdout}"
 
     except subprocess.CalledProcessError as e:
         return f"❌ Fpocket Execution Failed.\nError details: {e.stderr}"
@@ -124,6 +206,15 @@ def run_prankweb_prediction():
             gr.update(value=None, visible=False),
             gr.update(value="", visible=False)
         )
+
+    # --- CLEANUP LOGIC ---
+    # Delete the output directory if it exists to ensure a fresh run
+    if os.path.exists(PRANKWEB_OUTPUT_DIR):
+        try:
+            shutil.rmtree(PRANKWEB_OUTPUT_DIR)
+            print(f"🗑️ Deleted previous results folder: {PRANKWEB_OUTPUT_DIR}")
+        except Exception as e:
+            print(f"⚠️ Warning: Could not delete output directory: {e}")
 
     yield (
         gr.update(value="<div style='padding: 20px; background: #fff3cd; border-radius: 8px; color: #856404;'>⚙️ Converting PDBQT to PDB...</div>", visible=True),
