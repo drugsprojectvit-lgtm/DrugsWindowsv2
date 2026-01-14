@@ -1,7 +1,7 @@
 # app.py
 """
 Main Gradio interface for Protein Structure Finder & Analyzer
-Updated version: Ligand Analysis uses Converted PDBs for Dropdown and Visualization.
+Updated version: Includes Fpocket Integration in Tab 3.
 """
 
 import os
@@ -327,12 +327,18 @@ with gr.Blocks(theme=gr.themes.Soft(), title="Protein Structure Finder & Analyze
                 prev_btn_2 = gr.Button("← Previous", variant="secondary")
                 next_btn_2 = gr.Button("Next: Binding Site Prediction →", variant="primary")
 
-        # Tab 3: PrankWeb
+        # Tab 3: PrankWeb & Fpocket
         with gr.Tab("🎯 Binding Site Prediction", id=3):
-            gr.Markdown("### Active Site Prediction")
-            prankweb_btn = gr.Button("🔮 Run PrankWeb", variant="secondary")
+            gr.Markdown("### Active Site Prediction (P2Rank & Fpocket)")
+            prankweb_btn = gr.Button("🔮 Run Prediction (P2Rank + Fpocket)", variant="secondary")
             prankweb_status = gr.HTML(visible=False)
-            prankweb_results = gr.Dataframe(label="Results", visible=False)
+            
+            with gr.Row():
+                with gr.Column(scale=1):
+                    prankweb_results = gr.Dataframe(label="P2Rank Results (CSV)", visible=False)
+                with gr.Column(scale=1):
+                    fpocket_results = gr.TextArea(label="Fpocket Report (_info.txt)", visible=False, lines=20)
+                    
             with gr.Row():
                 prev_btn_3 = gr.Button("← Previous", variant="secondary")
                 next_btn_3 = gr.Button("Next: Ligand Analysis →", variant="primary")
@@ -417,7 +423,9 @@ with gr.Blocks(theme=gr.themes.Soft(), title="Protein Structure Finder & Analyze
     search_btn.click(process_disease, inputs=[disease_input], outputs={info_box, structure_viewer, download_file, search_status})
     ramplot_btn.click(fn=run_ramplot, inputs=[], outputs=[ramplot_status, plot1, plot2, plot3, plot4, ramplot_stats])
     prepare_btn.click(fn=prepare_protein_meeko, inputs=[], outputs=[prepare_status, prepared_viewer, prepared_download])
-    prankweb_btn.click(fn=run_prankweb_prediction, inputs=[], outputs=[prankweb_status, prankweb_results])
+    
+    # UPDATED: P2Rank + Fpocket Trigger
+    prankweb_btn.click(fn=run_prankweb_prediction, inputs=[], outputs=[prankweb_status, prankweb_results, fpocket_results])
     
     docking_btn.click(fn=run_molecular_docking, inputs=[], outputs=[docking_status, docking_summary, chain_selector, pose_selector])
     chain_selector.change(fn=filter_poses_by_chain, inputs=[chain_selector, docking_summary], outputs=[pose_selector])
