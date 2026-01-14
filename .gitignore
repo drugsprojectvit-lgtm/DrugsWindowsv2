@@ -1,1 +1,15 @@
 drugv/
+__pycache__/
+.gradio/
+docking_results/
+prankweb_results/
+prepared_protein_meeko/
+proteins/
+ligand_pdb/
+my_analysis_folder/
+p2rank_2.5.1/
+pdbqt/
+pdbqt_new/
+pdbqt_og/
+results/
+configs/
