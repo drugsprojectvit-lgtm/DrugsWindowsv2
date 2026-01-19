@@ -2,11 +2,11 @@
 """
 Batch Pipeline for Protein Structure Analysis
 Processes multiple proteins through the complete workflow and saves all outputs.
-UPDATED:
-- Compatible with Local P2Rank (prankweb.py).
-- Compatible with Clean Docking workflow (docking.py).
-- Compatible with robust ADMET analysis (admet_analysis.py).
-- ADDED: FASTA download in Step 1 to support SWISS-MODEL fallback in Step 2.
+
+UPDATED FEATURES:
+- Step 4: Handles Combined P2Rank + Fpocket results (combined_pockets.csv).
+- Step 5: NEW Ligand Analysis (Chemical classification).
+- Step 6: Docking uses the combined pocket list.
 """
 
 import os
@@ -20,13 +20,14 @@ import time
 import glob
 import base64
 import re
-import requests # Added for FASTA download
+import requests
 
 # Import modules from your app
-from config import current_pdb_info, PROTEINS_DIR, DOCKING_RESULTS_DIR, RAMPLOT_OUTPUT_DIR
+from config import current_pdb_info, PROTEINS_DIR, DOCKING_RESULTS_DIR, RAMPLOT_OUTPUT_DIR, LIGAND_DIR
 from ramachandran import run_ramplot
 from prankweb import run_prankweb_prediction
 from protein_prep import prepare_protein_meeko
+from ligand_analysis import run_ligand_classification
 from docking import run_molecular_docking
 from admet_analysis import run_admet_prediction
 from utils import map_disease_to_protein, find_best_pdb_structure
@@ -140,8 +141,15 @@ class ProteinPipelineBatch:
         protein_dir = self.output_base_dir / safe_name
         protein_dir.mkdir(exist_ok=True)
         
-        steps = ["01_structure_search", "02_ramachandran_analysis", "03_protein_preparation",
-                 "04_binding_site_prediction", "05_molecular_docking", "06_admet_analysis"]
+        steps = [
+            "01_structure_search", 
+            "02_ramachandran_analysis", 
+            "03_protein_preparation",
+            "04_binding_site_prediction", 
+            "05_ligand_analysis",     # NEW STEP
+            "06_molecular_docking",   # SHIFTED
+            "07_admet_analysis"       # SHIFTED
+        ]
         step_dirs = {}
         for step in steps:
             step_dir = protein_dir / step
@@ -150,12 +158,11 @@ class ProteinPipelineBatch:
         return protein_dir, step_dirs
     
     def save_3d_viewer_as_image(self, html_content, output_path, title=""):
-        """Convert 3D viewer HTML to 2D image using screenshot method with WebGL support."""
+        """Convert 3D viewer HTML to 2D image using screenshot method."""
         if not html_content: return False
 
         if isinstance(html_content, str) and "data:text/html;base64," in html_content:
             try:
-                # Decode the base64 iframe content to get the actual HTML
                 match = re.search(r'src="data:text/html;base64,([^"]+)"', html_content)
                 if match:
                     b64_str = match.group(1)
@@ -190,12 +197,11 @@ class ProteinPipelineBatch:
             with open(temp_html, 'w', encoding='utf-8') as f: f.write(html_content)
             
             driver.get(f"file://{temp_html.absolute()}")
-            time.sleep(8)  # Wait for 3Dmol to render
+            time.sleep(8)
             
             try: driver.execute_script("if(typeof viewer !== 'undefined') { viewer.render(); }")
             except: pass
 
-            # Try to screenshot the canvas specifically, else full page
             try:
                 canvas = driver.find_element(By.TAG_NAME, "canvas")
                 canvas.screenshot(str(output_path))
@@ -207,13 +213,11 @@ class ProteinPipelineBatch:
             return True
         except Exception as e:
             print(f"⚠️ Screenshot failed: {e}")
-            # Save HTML as fallback if screenshot fails
             html_path = output_path.with_suffix('.html')
             with open(html_path, 'w', encoding='utf-8') as f: f.write(html_content)
             return False
     
-    # ... [Steps 1-3] ...
-
+    # --- STEP 1: STRUCTURE SEARCH ---
     def process_structure_search(self, protein_input, step_dir):
         print(f"\n{'='*60}")
         print(f"STEP 1: Structure Search - {protein_input}")
@@ -229,41 +233,38 @@ class ProteinPipelineBatch:
                 return results
             
             pdb_id, pdb_path = result
-            # Ensure Absolute Path
             pdb_path = os.path.abspath(pdb_path)
             results["pdb_id"], results["pdb_path"] = pdb_id, pdb_path
             
-            current_pdb_info.update({"pdb_id": pdb_id, "pdb_path": pdb_path, "prepared_pdbqt": None, "docking_results": None, "prankweb_csv": None})
+            current_pdb_info.update({
+                "pdb_id": pdb_id, 
+                "pdb_path": pdb_path, 
+                "prepared_pdbqt": None, 
+                "docking_results": None, 
+                "prankweb_csv": None,
+                "combined_csv": None
+            })
             
             dest_pdb = step_dir / f"{pdb_id}.pdb"
             shutil.copy2(pdb_path, dest_pdb)
             
-            # --- NEW: Download FASTA for SWISS-MODEL Support ---
+            # FASTA Download
             try:
-                print(f"  ⬇️  Fetching FASTA for {pdb_id} (Required for potential Homology Modeling)...")
+                print(f"  ⬇️  Fetching FASTA for {pdb_id}...")
                 fasta_url = f"https://www.rcsb.org/fasta/entry/{pdb_id}"
                 response = requests.get(fasta_url, timeout=10)
-                
                 if response.status_code == 200:
                     fasta_content = response.text
-                    
-                    # 1. Save to PROTEINS_DIR (Required by ramachandran.py logic)
                     os.makedirs(PROTEINS_DIR, exist_ok=True)
                     main_fasta_path = os.path.join(PROTEINS_DIR, f"{pdb_id}.fasta")
-                    with open(main_fasta_path, "w") as f:
-                        f.write(fasta_content)
-                        
-                    # 2. Save to Batch Step Directory (For record keeping)
+                    with open(main_fasta_path, "w") as f: f.write(fasta_content)
                     batch_fasta_path = step_dir / f"{pdb_id}.fasta"
-                    with open(batch_fasta_path, "w") as f:
-                        f.write(fasta_content)
-                        
-                    print(f"  ✅ FASTA saved to {main_fasta_path}")
+                    with open(batch_fasta_path, "w") as f: f.write(fasta_content)
+                    print(f"  ✅ FASTA saved")
                 else:
                     print(f"  ⚠️ Failed to download FASTA (Status: {response.status_code})")
             except Exception as fasta_err:
                 print(f"  ⚠️ Error downloading FASTA: {fasta_err}")
-            # ----------------------------------------------------
 
             with open(pdb_path, 'r') as f: pdb_content = f.read()
             structure_html = show_structure(protein_text=pdb_content, pdb_id=pdb_id, protein_name=protein_name)
@@ -275,6 +276,7 @@ class ProteinPipelineBatch:
             print(f"❌ Error: {e}")
         return results
 
+    # --- STEP 2: RAMACHANDRAN ---
     def process_ramachandran(self, step_dir):
         print(f"\nSTEP 2: Ramachandran Analysis")
         run_ramplot() 
@@ -300,14 +302,12 @@ class ProteinPipelineBatch:
                         try:
                             shutil.copy2(src_img, step_dir)
                             img_files_copied += 1
-                        except Exception as e:
-                            print(f"Warning: Could not copy image {img_name}: {e}")
-            else:
-                print(f"Warning: 'Plots' subdirectory not found in {RAMPLOT_OUTPUT_DIR}")
+                        except: pass
         
-        print(f"✅ Ramachandran analysis complete. Copied {csv_files_copied} CSVs and {img_files_copied} images.")
-        return {"status": "success", "csv_files_count": csv_files_copied, "img_files_count": img_files_copied}
+        print(f"✅ Ramachandran analysis complete.")
+        return {"status": "success", "csv_files_count": csv_files_copied}
 
+    # --- STEP 3: PROTEIN PREP ---
     def process_protein_preparation(self, step_dir):
         print(f"\nSTEP 3: Protein Preparation")
         generator = prepare_protein_meeko()
@@ -317,13 +317,11 @@ class ProteinPipelineBatch:
         results = {"status": "failed"}
         if final_output:
             pdbqt_update = final_output[2] if len(final_output) > 2 else None
-            # Handle potential Gradio update object or direct dict
-            if hasattr(pdbqt_update, 'value'):
-                pdbqt_path = pdbqt_update.value
-            elif isinstance(pdbqt_update, dict):
-                pdbqt_path = pdbqt_update.get('value')
-            else:
-                pdbqt_path = pdbqt_update
+            pdbqt_path = None
+            
+            if hasattr(pdbqt_update, 'value'): pdbqt_path = pdbqt_update.value
+            elif isinstance(pdbqt_update, dict): pdbqt_path = pdbqt_update.get('value')
+            else: pdbqt_path = pdbqt_update
 
             if pdbqt_path and os.path.exists(pdbqt_path):
                 dest_pdbqt = step_dir / Path(pdbqt_path).name
@@ -335,75 +333,130 @@ class ProteinPipelineBatch:
                     html_view = show_structure(protein_text=prepared_text, pdb_id="Prepared Structure", protein_name="Auto-Prepared")
                     img_path = step_dir / "prepared_protein_structure.png"
                     self.save_3d_viewer_as_image(html_view, img_path, "Prepared Structure")
-                    print(f"  ✓ Saved prepared structure image")
-                except Exception as img_err:
-                    print(f"  ⚠️ Could not save prepared structure image: {img_err}")
+                except: pass
 
                 results["status"] = "success"
                 print(f"✅ Protein prepared")
         return results
 
+    # --- STEP 4: BINDING SITES (MERGED) ---
     def process_binding_sites(self, step_dir):
-        """Step 4: Binding Site Prediction (Local P2Rank)"""
+        """Step 4: Binding Site Prediction (P2Rank + Fpocket)."""
         print(f"\nSTEP 4: Binding Site Prediction")
         if not current_pdb_info.get("prepared_pdbqt"): return {"status": "skipped"}
         
         try:
-            print(f"  Running Local PrankWeb (P2Rank)...")
+            print(f"  Running Local P2Rank & Fpocket...")
             generator = run_prankweb_prediction()
             final_output = None
-            
-            # Iterate through generator to trigger execution
             for output in generator: final_output = output
             
             results = {"status": "failed"}
             
             if final_output:
-                # In your new prankweb.py, output is (status_update, df_update)
+                # final_output signature in new code: (status_html, dataframe_update, fpocket_text_update)
                 df_update = final_output[1] if len(final_output) > 1 else None
+                fpocket_text_update = final_output[2] if len(final_output) > 2 else None
                 
-                # Extract DataFrame from Gradio update object
+                # 1. Handle DataFrame (Combined Pockets)
                 df = None
-                if hasattr(df_update, 'value'):
-                    df = df_update.value
-                elif isinstance(df_update, dict):
-                    df = df_update.get('value')
-                else:
-                    df = df_update
+                if hasattr(df_update, 'value'): df = df_update.value
+                elif isinstance(df_update, dict): df = df_update.get('value')
+                else: df = df_update
 
+                # 2. Handle Fpocket Text
+                fpocket_txt = ""
+                if hasattr(fpocket_text_update, 'value'): fpocket_txt = fpocket_text_update.value
+                elif isinstance(fpocket_text_update, dict): fpocket_txt = fpocket_text_update.get('value')
+                else: fpocket_txt = fpocket_text_update
+
+                # Save Results
                 if df is not None and not df.empty:
-                    csv_path = step_dir / "binding_sites.csv"
-                    df.to_csv(csv_path, index=False)
-                    current_pdb_info["prankweb_csv"] = str(csv_path)
+                    # Save Combined CSV (Critical for Docking)
+                    combined_csv_path = step_dir / "combined_pockets.csv"
+                    df.to_csv(combined_csv_path, index=False)
+                    current_pdb_info["combined_csv"] = str(combined_csv_path) # Update global config
+                    
                     results["status"] = "success"
-                    print(f"✅ {len(df)} pockets found")
-                    return results # SUCCESS
+                    print(f"✅ {len(df)} pockets found (P2Rank + Fpocket). Saved combined_pockets.csv")
                 else:
-                     print("  ⚠️ Output DataFrame is empty.")
+                    print("  ⚠️ No merged pockets found.")
+                
+                # Save Fpocket Text Report
+                if fpocket_txt:
+                    with open(step_dir / "fpocket_report.txt", "w") as f:
+                        f.write(fpocket_txt)
+
+                return results
+
             else:
-                  print("  ⚠️ No final output received from P2Rank.")
+                print("  ⚠️ No final output received from prediction module.")
 
         except Exception as e:
             print(f"  ❌ Error: {e}")
             traceback.print_exc()
 
-        return {"status": "failed", "error": "P2Rank execution failed"}
+        return {"status": "failed", "error": "Prediction execution failed"}
 
+    # --- STEP 5: LIGAND ANALYSIS (NEW) ---
+    def process_ligand_analysis(self, step_dir):
+        """Step 5: Chemical Class Analysis of Ligands."""
+        print(f"\nSTEP 5: Ligand Analysis")
+        
+        # Ensure we are analyzing the configured ligand directory
+        ligand_source_dir = LIGAND_DIR if os.path.exists(LIGAND_DIR) else "pdbqt"
+        
+        try:
+            print(f"  Analyzing ligands in: {ligand_source_dir}")
+            df, csv_path = run_ligand_classification(ligand_source_dir)
+            
+            results = {"status": "failed"}
+            
+            if df is not None and not df.empty:
+                # Copy report
+                if csv_path and os.path.exists(csv_path):
+                    shutil.copy2(csv_path, step_dir / "ligand_classification_report.csv")
+                
+                # Optionally copy converted PDBs for debugging/viewing
+                ligand_pdb_out = step_dir / "ligand_pdb_converted"
+                os.makedirs(ligand_pdb_out, exist_ok=True)
+                
+                source_pdb_folder = "ligand_pdb" # Default output of run_ligand_classification
+                if os.path.exists(source_pdb_folder):
+                    for f in os.listdir(source_pdb_folder):
+                        if f.endswith(".pdb"):
+                            shutil.copy2(os.path.join(source_pdb_folder, f), ligand_pdb_out)
+                
+                results["status"] = "success"
+                print(f"✅ Analyzed {len(df)} ligands.")
+            else:
+                print(f"  ⚠️ No ligands found or analysis failed.")
+            
+            return results
+            
+        except Exception as e:
+            print(f"  ❌ Ligand Analysis Error: {e}")
+            return {"status": "failed", "error": str(e)}
+
+    # --- STEP 6: DOCKING ---
     def process_docking(self, step_dir):
-        """Step 5: Molecular docking (ALL RESULTS - NO FILTER)"""
+        """Step 6: Molecular docking using Combined Pockets."""
         print(f"\n{'='*60}")
-        print(f"STEP 5: Molecular Docking")
+        print(f"STEP 6: Molecular Docking")
         print(f"{'='*60}")
         
         results = {"status": "failed"}
         
         try:
             if not current_pdb_info.get("prepared_pdbqt"): return results
-            if not current_pdb_info.get("prankweb_csv"): return results
+            # Docking now relies on combined_csv
+            if not current_pdb_info.get("combined_csv"): 
+                print("  ⚠️ No combined pocket data found. Skipping.")
+                return results
 
             generator = run_molecular_docking()
             final_output = None
-            print("  ⚙️  Running Vina Docking...")
+            print("  ⚙️  Running Vina Docking (Multi-Chain)...")
             for output in generator: final_output = output
             
             if not final_output: return results
@@ -411,12 +464,9 @@ class ProteinPipelineBatch:
             # Extract summary dataframe
             df_update = final_output[1] if len(final_output) > 1 else None
             summary_df = None
-            if hasattr(df_update, 'value'):
-                summary_df = df_update.value
-            elif isinstance(df_update, dict):
-                summary_df = df_update.get('value')
-            else:
-                summary_df = df_update
+            if hasattr(df_update, 'value'): summary_df = df_update.value
+            elif isinstance(df_update, dict): summary_df = df_update.get('value')
+            else: summary_df = df_update
             
             if summary_df is not None and not summary_df.empty:
                 csv_path = step_dir / "docking_summary.csv"
@@ -425,50 +475,46 @@ class ProteinPipelineBatch:
                 print(f"  ✓ Saved: docking_summary.csv")
                 
                 summary_df['binding_energy'] = pd.to_numeric(summary_df['binding_energy'], errors='coerce')
-                
-                # Process ALL results
                 results_to_process = summary_df 
-                print(f"  ℹ️  Processing all {len(results_to_process)} docked poses...")
+                print(f"  ℹ️  Processing {len(results_to_process)} docked poses...")
 
-                # Pre-load Protein Structure for Visualization
+                # Pre-load Protein
                 protein_path = current_pdb_info.get("pdb_path")
                 protein_text = ""
                 if protein_path and os.path.exists(protein_path):
                     with open(protein_path, 'r') as pf: protein_text = pf.read()
-                else:
-                    print("  ⚠️ Protein structure not found for visualization.")
 
                 for idx, row in results_to_process.iterrows():
                     ligand_name = str(row['ligand']).strip()
                     pocket_name = str(row['pocket']).strip()
+                    chain_id = str(row.get('chain', 'A'))
                     energy = float(row['binding_energy'])
                     pose_num = int(row['pose_number'])
-                    pdb_file_path = row['pdb_file'] # Ligand Only PDB
+                    pdb_file_path = row['pdb_file']
                     
                     safe_ligand = "".join(c if c.isalnum() else '_' for c in ligand_name)
                     energy_str = f"{energy:.1f}kcal"
-                    base_filename = f"{safe_ligand}_{energy_str}_pose_{pose_num}"
+                    base_filename = f"{safe_ligand}_{pocket_name}_{chain_id}_pose{pose_num}"
 
-                    # 1. Save 2D Interaction Image (Generated by pandamap in docking.py)
+                    # 1. Save 2D Interaction Image
                     if 'interaction_image' in row and row['interaction_image'] != "N/A":
                         img_src = row['interaction_image']
                         if os.path.exists(img_src):
-                            img_dest = step_dir / f"{base_filename}_2D_interaction.png"
+                            img_dest = step_dir / f"{base_filename}_2D.png"
                             shutil.copy2(img_src, img_dest)
-                            print(f"  ✓ Saved 2D Image: {img_dest.name}")
 
                     # 2. SAVE COMPLEX PDB
-                    output_dir_pdb = os.path.join(DOCKING_RESULTS_DIR, "pdb")
-                    complex_src = os.path.join(output_dir_pdb, f"{ligand_name}_{pocket_name}_complex.pdb")
+                    # Logic: reconstruct path based on known structure or extract from file system
+                    # Note: run_molecular_docking generates complexes in subfolders.
+                    # We try to find the complex file generated by docking.py
+                    chain_dir = os.path.dirname(os.path.dirname(pdb_file_path)) # up from docked_pdb -> chain_dir
+                    complex_src = os.path.join(os.path.dirname(pdb_file_path), f"{ligand_name}_{pocket_name}_complex.pdb")
+                    
                     if os.path.exists(complex_src):
                         complex_dest = step_dir / f"{base_filename}_complex.pdb"
                         shutil.copy2(complex_src, complex_dest)
-                        print(f"  ✓ Saved Complex PDB: {complex_dest.name}")
-                    else:
-                        print(f"  ⚠️ Complex PDB not found: {complex_src}")
 
-                    # 3. Generate 3D Screenshot DIRECTLY
-                    # We extract the specific model text manually to avoid import errors
+                    # 3. Generate 3D Screenshot
                     ligand_text_pose = ""
                     if os.path.exists(pdb_file_path):
                         with open(pdb_file_path, 'r') as lf:
@@ -490,22 +536,14 @@ class ProteinPipelineBatch:
                             ligand_text_pose = "".join(model_lines) if found_pose else "".join(lines)
                     
                     if protein_text and ligand_text_pose:
-                        # Generate HTML locally
                         viewer_html = show_structure(
                             protein_text=protein_text, 
                             ligand_text=ligand_text_pose, 
                             pdb_id="Docking Result", 
-                            protein_name=f"Pose {pose_num} ({energy} kcal/mol)"
+                            protein_name=f"Chain {chain_id} | {pocket_name} | {energy} kcal"
                         )
-                        
-                        screenshot_path = step_dir / f"{base_filename}_3D_view.png"
-                        success = self.save_3d_viewer_as_image(viewer_html, screenshot_path, f"{ligand_name} {energy}")
-                        if success:
-                            print(f"  ✓ Saved 3D Screenshot: {screenshot_path.name}")
-                        else:
-                             print(f"  ⚠️ Failed 3D Screenshot: {base_filename}")
-                    else:
-                        print(f"  ⚠️ Missing protein or ligand text for 3D view: {base_filename}")
+                        screenshot_path = step_dir / f"{base_filename}_3D.png"
+                        self.save_3d_viewer_as_image(viewer_html, screenshot_path, base_filename)
 
                 results["status"] = "success"
                 results["num_poses"] = len(results_to_process)
@@ -522,23 +560,19 @@ class ProteinPipelineBatch:
         
         return results
 
+    # --- STEP 7: ADMET ---
     def process_admet(self, step_dir):
-        """Step 6: ADMET Analysis"""
-        print(f"\nSTEP 6: ADMET Analysis")
-        # run_admet_prediction now returns a tuple: (msg, df, csv_path)
+        print(f"\nSTEP 7: ADMET Analysis")
         result = run_admet_prediction()
-        
         if result:
             msg, df, csv_path = result
             if csv_path and os.path.exists(csv_path):
                 shutil.copy2(csv_path, step_dir / "admet_results.csv")
                 print(f"✅ ADMET results saved.")
                 return {"status": "success", "message": msg}
-            else:
-                print(f"⚠️ ADMET analysis ran, but CSV path not found.")
-        
         return {"status": "failed"}
     
+    # --- PIPELINE CONTROLLER ---
     def process_single_protein(self, protein_input):
         print(f"\n{'#'*80}")
         print(f"# Processing: {protein_input}")
@@ -547,22 +581,34 @@ class ProteinPipelineBatch:
         protein_dir, step_dirs = self.create_protein_folders(protein_input)
         pipeline_results = {"protein_input": protein_input, "start_time": datetime.now().isoformat(), "steps": {}}
         
+        # 1. Search
         pipeline_results["steps"]["structure_search"] = self.process_structure_search(protein_input, step_dirs["01_structure_search"])
         if pipeline_results["steps"]["structure_search"]["status"] != "success":
             pipeline_results["pipeline_status"] = "failed_at_step_1"
             self.save_pipeline_summary(protein_dir, pipeline_results)
             return pipeline_results
         
+        # 2. Ramachandran
         pipeline_results["steps"]["ramachandran"] = self.process_ramachandran(step_dirs["02_ramachandran_analysis"])
+        
+        # 3. Prep
         pipeline_results["steps"]["protein_preparation"] = self.process_protein_preparation(step_dirs["03_protein_preparation"])
         if pipeline_results["steps"]["protein_preparation"]["status"] != "success":
             pipeline_results["pipeline_status"] = "failed_at_step_3"
             self.save_pipeline_summary(protein_dir, pipeline_results)
             return pipeline_results
         
+        # 4. Binding Sites (Combined)
         pipeline_results["steps"]["binding_sites"] = self.process_binding_sites(step_dirs["04_binding_site_prediction"])
-        pipeline_results["steps"]["docking"] = self.process_docking(step_dirs["05_molecular_docking"])
-        pipeline_results["steps"]["admet"] = self.process_admet(step_dirs["06_admet_analysis"])
+        
+        # 5. Ligand Analysis (NEW)
+        pipeline_results["steps"]["ligand_analysis"] = self.process_ligand_analysis(step_dirs["05_ligand_analysis"])
+
+        # 6. Docking (Multi-Chain, Combined Pockets)
+        pipeline_results["steps"]["docking"] = self.process_docking(step_dirs["06_molecular_docking"])
+        
+        # 7. ADMET
+        pipeline_results["steps"]["admet"] = self.process_admet(step_dirs["07_admet_analysis"])
         
         pipeline_results["pipeline_status"] = "completed"
         pipeline_results["end_time"] = datetime.now().isoformat()
@@ -583,6 +629,7 @@ class ProteinPipelineBatch:
             except Exception as e:
                 print(f"❌ Fatal error: {e}")
                 batch_results["proteins"][protein] = {"status": "fatal_error", "error": str(e)}
+        self.generate_batch_csv_summary(batch_results)
         return batch_results
     
     def generate_batch_csv_summary(self, batch_results):
@@ -594,7 +641,6 @@ class ProteinPipelineBatch:
 
 if __name__ == "__main__":
     protein_list = [
-    "AKT1",
     "KRAS"
 ]
 
