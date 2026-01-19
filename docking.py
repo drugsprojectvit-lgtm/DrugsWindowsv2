@@ -1,4 +1,3 @@
-# docking.py
 """
 Molecular docking module using AutoDock Vina Executable
 Supports splitting receptor into chains.
@@ -17,106 +16,84 @@ from config import current_pdb_info, DOCKING_RESULTS_DIR, LIGAND_DIR, PRANKWEB_O
 VINA_EXE = "vina.exe" 
 
 def split_pdbqt_chains(pdbqt_path, output_base_dir):
-    """
-    Splits a prepared PDBQT file into separate PDBQT files based on TER records.
-    Returns a dictionary: {'Chain_A': path, 'Chain_B': path, ...}
-    """
+    """Splits a prepared PDBQT file into separate PDBQT files based on TER records."""
     chains = {}
     chain_letters = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
     chain_idx = 0
-    
     current_lines = []
     
     with open(pdbqt_path, 'r') as f:
         lines = f.readlines()
         
+    def save_chain(lines, idx):
+        if not lines: return None, None
+        c_name = f"Chain_{chain_letters[idx % len(chain_letters)]}"
+        if idx >= len(chain_letters): c_name += str(idx // len(chain_letters))
+        c_dir = os.path.join(output_base_dir, c_name)
+        os.makedirs(c_dir, exist_ok=True)
+        c_path = os.path.join(c_dir, "receptor.pdbqt")
+        with open(c_path, 'w') as out: out.writelines(lines)
+        return c_name, c_path
+
     for line in lines:
         if line.startswith("TER") or line.startswith("ENDMDL"):
-            if current_lines:
-                # We have a chain
-                chain_name = f"Chain_{chain_letters[chain_idx % len(chain_letters)]}"
-                if chain_idx >= len(chain_letters):
-                    chain_name += str(chain_idx // len(chain_letters))
-                
-                chain_dir = os.path.join(output_base_dir, chain_name)
-                os.makedirs(chain_dir, exist_ok=True)
-                
-                chain_file_path = os.path.join(chain_dir, "receptor.pdbqt")
-                
-                with open(chain_file_path, 'w') as out:
-                    out.writelines(current_lines)
-                
-                chains[chain_name] = chain_file_path
-                current_lines = []
-                chain_idx += 1
+            name, path = save_chain(current_lines, chain_idx)
+            if name: chains[name] = path
+            current_lines = []
+            chain_idx += 1
         else:
             current_lines.append(line)
             
-    # Handle last chain if no trailing TER/ENDMDL
     if current_lines:
-        chain_name = f"Chain_{chain_letters[chain_idx % len(chain_letters)]}"
-        chain_dir = os.path.join(output_base_dir, chain_name)
-        os.makedirs(chain_dir, exist_ok=True)
-        chain_file_path = os.path.join(chain_dir, "receptor.pdbqt")
-        with open(chain_file_path, 'w') as out:
-            out.writelines(current_lines)
-        chains[chain_name] = chain_file_path
+        name, path = save_chain(current_lines, chain_idx)
+        if name: chains[name] = path
         
     return chains
 
 def run_molecular_docking():
-    """Run molecular docking on EACH CHAIN individually."""
+    """Run molecular docking on EACH CHAIN individually using Combined CSV."""
     
     if not current_pdb_info.get("prepared_pdbqt"):
         return (
-            gr.update(value="<div style='padding: 20px; background: #fee; border-radius: 8px; color: #c33;'>❌ No prepared protein found. Please prepare protein first.</div>", visible=True),
+            gr.update(value="<div style='padding: 20px; background: #fee; border-radius: 8px; color: #c33;'>❌ No prepared protein found.</div>", visible=True),
             gr.update(value=None, visible=False),
-            gr.update(choices=[], visible=False), # Chain selector
-            gr.update(choices=[], visible=False)  # Pose selector
+            gr.update(choices=[], visible=False),
+            gr.update(choices=[], visible=False)
         )
     
     yield (
-        gr.update(value="<div style='padding: 20px; background: #fff3cd; border-radius: 8px; color: #856404;'>🔬 Splitting chains and running docking (this may take several minutes)...</div>", visible=True),
+        gr.update(value="<div style='padding: 20px; background: #fff3cd; border-radius: 8px; color: #856404;'>🔬 Splitting chains and running docking...</div>", visible=True),
         gr.update(value=None, visible=False),
         gr.update(choices=[], visible=False),
         gr.update(choices=[], visible=False)
     )
     
     try:
-        # --- CLEANUP OLD RESULTS ---
         if os.path.exists(DOCKING_RESULTS_DIR):
-            try:
-                shutil.rmtree(DOCKING_RESULTS_DIR)
-            except Exception as e:
-                yield (gr.update(value=f"<div style='padding: 20px; background: #fee; border-radius: 8px; color: #c33;'>❌ Error deleting old results: {str(e)}</div>", visible=True), None, gr.update(choices=[]), gr.update(choices=[]))
-                return
+            try: shutil.rmtree(DOCKING_RESULTS_DIR)
+            except Exception: pass
         os.makedirs(DOCKING_RESULTS_DIR, exist_ok=True)
 
-        # Input files
         protein_pdbqt = current_pdb_info["prepared_pdbqt"]
         ligand_folder = LIGAND_DIR
         
         # --- SPLIT CHAINS ---
         chain_map = split_pdbqt_chains(protein_pdbqt, DOCKING_RESULTS_DIR)
         if not chain_map:
-             yield (gr.update(value="<div style='padding: 20px; background: #fee; border-radius: 8px; color: #c33;'>❌ Could not split protein into chains.</div>", visible=True), None, gr.update(choices=[]), gr.update(choices=[]))
+             yield (gr.update(value="<div style='padding: 20px; background: #fee; border-radius: 8px; color: #c33;'>❌ Could not split protein.</div>", visible=True), None, gr.update(choices=[]), gr.update(choices=[]))
              return
         
-        # Find PrankWeb CSV
-        output_dir = PRANKWEB_OUTPUT_DIR
-        csv_file = None
-        if current_pdb_info.get("prankweb_csv") and os.path.exists(current_pdb_info["prankweb_csv"]):
-            csv_file = current_pdb_info["prankweb_csv"]
-        else:
-            for root, dirs, files in os.walk(output_dir):
-                for file in files:
-                    if file.endswith("_predictions.csv"):
-                        csv_file = os.path.join(root, file)
-                        break
-                if csv_file: break
+        # --- LOCATE COMBINED CSV ---
+        # 1. Check Config
+        csv_file = current_pdb_info.get("combined_csv")
+        # 2. Check File System directly if config is missing
+        if not csv_file or not os.path.exists(csv_file):
+            potential = os.path.join(PRANKWEB_OUTPUT_DIR, "combined_pockets.csv")
+            if os.path.exists(potential):
+                csv_file = potential
         
         if not csv_file or not os.path.exists(csv_file):
-            yield (gr.update(value="<div style='padding: 20px; background: #fee; border-radius: 8px; color: #c33;'>❌ PrankWeb results not found.</div>", visible=True), None, gr.update(choices=[]), gr.update(choices=[]))
+            yield (gr.update(value="<div style='padding: 20px; background: #fee; border-radius: 8px; color: #c33;'>❌ Combined Pocket CSV not found. Run Prediction First.</div>", visible=True), None, gr.update(choices=[]), gr.update(choices=[]))
             return
         
         if not os.path.exists(ligand_folder):
@@ -138,17 +115,14 @@ def run_molecular_docking():
         
         summary_data = []
 
-        # --- DOCKING LOOP PER CHAIN ---
+        # --- DOCKING LOOP ---
         for chain_id, chain_receptor_pdbqt in chain_map.items():
-            
-            # Create subdirs for this chain
             chain_base_dir = os.path.dirname(chain_receptor_pdbqt)
             output_dir_pdbqt = os.path.join(chain_base_dir, "docked_pdbqt")
             output_dir_pdb = os.path.join(chain_base_dir, "docked_pdb")
             os.makedirs(output_dir_pdbqt, exist_ok=True)
             os.makedirs(output_dir_pdb, exist_ok=True)
 
-            # Convert Chain Receptor PDBQT to PDB for visualization later
             chain_receptor_pdb = os.path.join(output_dir_pdb, "receptor_ref.pdb")
             subprocess.run(['obabel', chain_receptor_pdbqt, '-O', chain_receptor_pdb], check=False, capture_output=True)
 
@@ -157,6 +131,7 @@ def run_molecular_docking():
                 ligand_best_poses = []
                 
                 for index, row in df.iterrows():
+                    # Names are now unique e.g., 'p2rank_pocket1' or 'fpocket_pocket7'
                     pocket_name = str(row['name']).strip()
                     cx, cy, cz = float(row['center_x']), float(row['center_y']), float(row['center_z'])
                     
@@ -172,15 +147,12 @@ def run_molecular_docking():
                     try:
                         result = subprocess.run(cmd, capture_output=True, text=True, check=True, shell=True)
                         
-                        # Parse Energies
                         for line in result.stdout.splitlines():
                             if re.match(r'^\s*\d+', line):
                                 parts = line.split()
                                 if len(parts) >= 2:
                                     try:
-                                        mode_num = int(parts[0])
-                                        affinity = float(parts[1])
-                                        
+                                        mode_num, affinity = int(parts[0]), float(parts[1])
                                         if affinity <= 0.0:
                                             ligand_best_poses.append({
                                                 'chain': chain_id,
@@ -189,34 +161,30 @@ def run_molecular_docking():
                                                 'pose_number': mode_num,
                                                 'binding_energy': affinity,
                                                 'pdb_file': os.path.join(output_dir_pdb, f"{ligand_name}_{pocket_name}_ligand.pdb"),
-                                                'receptor_pdb_file': chain_receptor_pdb, # Store ref to specific chain PDB
+                                                'receptor_pdb_file': chain_receptor_pdb,
                                                 'interaction_image': "N/A" 
                                             })
                                     except ValueError: continue
 
-                        # Post-processing (Images/Complexes)
+                        # Post-processing
                         if os.path.exists(output_pdbqt_file):
                             pdb_ligand_only = os.path.join(output_dir_pdb, f"{ligand_name}_{pocket_name}_ligand.pdb")
                             subprocess.run(['obabel', output_pdbqt_file, '-O', pdb_ligand_only, '-h'], check=False, capture_output=True)
 
-                            # Generate Complex for PANDAMAP
+                            # Complex Generation
                             complex_file = os.path.join(output_dir_pdb, f"{ligand_name}_{pocket_name}_complex.pdb")
+                            rec_lines, lig_lines = [], []
                             
-                            # Read Receptor (The specific Chain)
-                            rec_lines = []
                             if os.path.exists(chain_receptor_pdb):
                                 with open(chain_receptor_pdb, 'r') as f:
                                     rec_lines = [l for l in f if l.startswith(("ATOM", "HETATM", "TER"))]
-
-                            # Read Ligand (Model 1)
-                            lig_lines = []
+                            
                             with open(output_pdbqt_file, 'r') as lf:
                                 in_model_1 = False
                                 for line in lf:
                                     if line.startswith("MODEL 1"): in_model_1 = True; continue
                                     if line.startswith("ENDMDL"): break
-                                    if in_model_1 and line.startswith("ATOM"):
-                                        lig_lines.append("HETATM" + line[6:])
+                                    if in_model_1 and line.startswith("ATOM"): lig_lines.append("HETATM" + line[6:])
 
                             with open(complex_file, 'w') as cf:
                                 cf.writelines(rec_lines)
@@ -224,7 +192,7 @@ def run_molecular_docking():
                                 cf.writelines(lig_lines)
                                 cf.write("END\n")
 
-                            # Run Pandamap
+                            # Pandamap
                             if os.path.exists(complex_file):
                                 interactions_png = os.path.join(output_dir_pdb, f"{ligand_name}_{pocket_name}_inter.png")
                                 try:
@@ -235,41 +203,32 @@ def run_molecular_docking():
                                                 entry['interaction_image'] = interactions_png
                                 except: pass
 
-                    except subprocess.CalledProcessError as e:
-                        print(f"Failed {chain_id}/{ligand_name}: {e}")
-                        continue
+                    except subprocess.CalledProcessError: continue
                 
                 if ligand_best_poses:
                     ligand_best_poses.sort(key=lambda x: x['binding_energy'])
-                    summary_data.extend(ligand_best_poses[:3]) # Top 3 per ligand per chain
+                    summary_data.extend(ligand_best_poses[:3]) 
 
         # --- Output Logic ---
         if summary_data:
             summary_df = pd.DataFrame(summary_data)
-            
-            # Get list of unique chains
             unique_chains = sorted(summary_df['chain'].unique())
-            
-            # Default: Select first chain
             default_chain = unique_chains[0]
             
-            # Filter poses for first chain to populate initial list
             chain_df = summary_df[summary_df['chain'] == default_chain]
             pose_choices = []
             for idx, row in chain_df.iterrows():
                 label = f"{row['ligand']} - {row['pocket']} (Pose {row['pose_number']}) | {row['binding_energy']:.2f} kcal"
-                value = f"{row['pdb_file']}::{row['pose_number']}::{row['chain']}" # Added chain to value for safety
+                value = f"{row['pdb_file']}::{row['pose_number']}::{row['chain']}"
                 pose_choices.append((label, value))
 
-            success_msg = f"""<div style='padding: 20px; background: #d4edda; border-radius: 8px; color: #155724;'>
-                ✅ Docking completed across {len(unique_chains)} chains! Found {len(summary_data)} total poses.
-            </div>"""
+            success_msg = f"<div style='padding: 20px; background: #d4edda; border-radius: 8px; color: #155724;'>✅ Docking completed! Found {len(summary_data)} total poses.</div>"
             
             yield (
                 gr.update(value=success_msg, visible=True),
                 gr.update(value=summary_df, visible=True),
-                gr.update(choices=unique_chains, visible=True, value=default_chain), # Update Chain Dropdown
-                gr.update(choices=pose_choices, visible=True, value=pose_choices[0][1] if pose_choices else None) # Update Pose Dropdown
+                gr.update(choices=unique_chains, visible=True, value=default_chain),
+                gr.update(choices=pose_choices, visible=True, value=pose_choices[0][1] if pose_choices else None)
             )
         else:
             yield (

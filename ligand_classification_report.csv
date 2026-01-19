@@ -1,0 +1,4 @@
+Ligand,Converted_PDB,MW (Da),Rotatable Bonds,Category,Guidance
+SKNKS-11.pdbqt,SKNKS-11.pdb,186.98,1,Fragment,Good for fragment-based screening.
+SKNKS-12.pdbqt,SKNKS-12.pdb,177.97,1,Fragment,Good for fragment-based screening.
+SKNKS-13.pdbqt,SKNKS-13.pdb,153.08,2,Fragment,Good for fragment-based screening.
