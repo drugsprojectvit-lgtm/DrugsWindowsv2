@@ -4,8 +4,9 @@ Batch Pipeline for Protein Structure Analysis
 Processes multiple proteins through the complete workflow and saves all outputs.
 
 UPDATED FEATURES:
-- Step 4: Handles Combined P2Rank + Fpocket results (combined_pockets.csv).
-- Step 5: NEW Ligand Analysis (Chemical classification).
+- Step 1: Integrated with multi-candidate UniProt search and FASTA auto-retrieval.
+- Step 4: Handles Combined P2Rank + Fpocket results.
+- Step 5: Ligand Analysis (Chemical classification).
 - Step 6: Docking uses the combined pocket list.
 """
 
@@ -146,9 +147,9 @@ class ProteinPipelineBatch:
             "02_ramachandran_analysis", 
             "03_protein_preparation",
             "04_binding_site_prediction", 
-            "05_ligand_analysis",     # NEW STEP
-            "06_molecular_docking",   # SHIFTED
-            "07_admet_analysis"       # SHIFTED
+            "05_ligand_analysis",     
+            "06_molecular_docking",   
+            "07_admet_analysis"       
         ]
         step_dirs = {}
         for step in steps:
@@ -226,7 +227,10 @@ class ProteinPipelineBatch:
         try:
             protein_name = map_disease_to_protein(protein_input) or protein_input.strip()
             results["protein_name"] = protein_name
+            
+            # Use updated utils logic (multi-candidate search + auto FASTA download)
             result = find_best_pdb_structure(protein_name, max_check=100)
+            
             if not result:
                 results["error"] = "No suitable PDB structure found"
                 print(f"❌ No structure found")
@@ -245,26 +249,21 @@ class ProteinPipelineBatch:
                 "combined_csv": None
             })
             
+            # Copy PDB to batch folder
             dest_pdb = step_dir / f"{pdb_id}.pdb"
             shutil.copy2(pdb_path, dest_pdb)
             
-            # FASTA Download
-            try:
-                print(f"  ⬇️  Fetching FASTA for {pdb_id}...")
-                fasta_url = f"https://www.rcsb.org/fasta/entry/{pdb_id}"
-                response = requests.get(fasta_url, timeout=10)
-                if response.status_code == 200:
-                    fasta_content = response.text
-                    os.makedirs(PROTEINS_DIR, exist_ok=True)
-                    main_fasta_path = os.path.join(PROTEINS_DIR, f"{pdb_id}.fasta")
-                    with open(main_fasta_path, "w") as f: f.write(fasta_content)
-                    batch_fasta_path = step_dir / f"{pdb_id}.fasta"
-                    with open(batch_fasta_path, "w") as f: f.write(fasta_content)
-                    print(f"  ✅ FASTA saved")
-                else:
-                    print(f"  ⚠️ Failed to download FASTA (Status: {response.status_code})")
-            except Exception as fasta_err:
-                print(f"  ⚠️ Error downloading FASTA: {fasta_err}")
+            # Copy FASTA to batch folder (Downloaded by utils automatically)
+            fasta_filename = f"{pdb_id}.fasta"
+            # Assuming utils downloads to the same folder as the PDB
+            source_fasta_path = os.path.join(os.path.dirname(pdb_path), fasta_filename)
+            
+            if os.path.exists(source_fasta_path):
+                dest_fasta = step_dir / fasta_filename
+                shutil.copy2(source_fasta_path, dest_fasta)
+                print(f"  ✅ FASTA copied to batch folder.")
+            else:
+                print(f"  ⚠️ FASTA file not found at expected location: {source_fasta_path}")
 
             with open(pdb_path, 'r') as f: pdb_content = f.read()
             structure_html = show_structure(protein_text=pdb_content, pdb_id=pdb_id, protein_name=protein_name)
@@ -282,7 +281,6 @@ class ProteinPipelineBatch:
         run_ramplot() 
         
         csv_files_copied = 0
-        img_files_copied = 0
         
         if os.path.exists(RAMPLOT_OUTPUT_DIR):
             for csv_file in glob.glob(os.path.join(RAMPLOT_OUTPUT_DIR, "*.csv")):
@@ -301,7 +299,6 @@ class ProteinPipelineBatch:
                     if os.path.exists(src_img):
                         try:
                             shutil.copy2(src_img, step_dir)
-                            img_files_copied += 1
                         except: pass
         
         print(f"✅ Ramachandran analysis complete.")
@@ -354,7 +351,7 @@ class ProteinPipelineBatch:
             results = {"status": "failed"}
             
             if final_output:
-                # final_output signature in new code: (status_html, dataframe_update, fpocket_text_update)
+                # final_output signature: (status_html, dataframe_update, fpocket_text_update)
                 df_update = final_output[1] if len(final_output) > 1 else None
                 fpocket_text_update = final_output[2] if len(final_output) > 2 else None
                 
@@ -505,9 +502,7 @@ class ProteinPipelineBatch:
 
                     # 2. SAVE COMPLEX PDB
                     # Logic: reconstruct path based on known structure or extract from file system
-                    # Note: run_molecular_docking generates complexes in subfolders.
-                    # We try to find the complex file generated by docking.py
-                    chain_dir = os.path.dirname(os.path.dirname(pdb_file_path)) # up from docked_pdb -> chain_dir
+                    chain_dir = os.path.dirname(os.path.dirname(pdb_file_path)) 
                     complex_src = os.path.join(os.path.dirname(pdb_file_path), f"{ligand_name}_{pocket_name}_complex.pdb")
                     
                     if os.path.exists(complex_src):
@@ -641,7 +636,7 @@ class ProteinPipelineBatch:
 
 if __name__ == "__main__":
     protein_list = [
-    "KRAS"
+    "AKT1"
 ]
 
     batch_processor = ProteinPipelineBatch(output_base_dir="FDA_drugs")
