@@ -5,8 +5,31 @@ Includes disease mapping, UniProt search, PDB filtering, and structure download.
 
 import requests
 import os
+import shutil  # <--- ADDED for clearing folders
 from typing import Optional, List, Dict, Tuple
 from config import DISEASE_PROTEIN_MAP
+
+# --- NEW HELPER FUNCTION ---
+def clear_proteins_folder(folder_path: str = "proteins"):
+    """
+    Deletes all files in the proteins folder to ensure only the 
+    current analysis file exists.
+    """
+    if os.path.exists(folder_path):
+        for filename in os.listdir(folder_path):
+            file_path = os.path.join(folder_path, filename)
+            try:
+                if os.path.isfile(file_path) or os.path.islink(file_path):
+                    os.unlink(file_path)
+                elif os.path.isdir(file_path):
+                    shutil.rmtree(file_path)
+            except Exception as e:
+                print(f"Failed to delete {file_path}. Reason: {e}")
+    else:
+        os.makedirs(folder_path, exist_ok=True)
+    
+    print(f"✓ Cleared '{folder_path}' directory.")
+
 
 def map_disease_to_protein(disease_input: str) -> Optional[str]:
     """Map a disease name or condition to its protein target."""
@@ -193,13 +216,13 @@ def find_best_pdb_structure(protein_name: str, max_check: int = 100) -> Optional
     """
     Find the best PDB structure for a protein OR download a specific PDB ID.
     
-    UPDATED LOGIC:
-    - Iterates through multiple UniProt candidates (classes/isoforms).
-    - If a structure with resolution < 2.0 Å is found, it stops immediately (Success).
-    - If a structure > 2.0 Å is found, it stores it but CONTINUES searching 
-      other UniProt IDs for a better one.
-    - If the loop finishes without a < 2.0 Å hit, it returns the best one found overall.
+    UPDATED: Clears the 'proteins' folder at the start of every run.
     """
+    
+    # --- STEP 1: CLEAR OLD DATA ---
+    # This ensures only the new protein exists in the folder
+    clear_proteins_folder() 
+    
     clean_input = protein_name.strip()
     
     # --- Check for Direct PDB ID Input ---
@@ -263,7 +286,6 @@ def find_best_pdb_structure(protein_name: str, max_check: int = 100) -> Optional
                 current_uniprot_best = (pdb_id, resolution)
                 print(f"  → Current best for {uniprot_id}: {pdb_id} ({resolution}Å)")
                 
-                # [CRITICAL CHANGE]
                 # If we find a "Golden Ticket" (< 2.0 A), we stop EVERYTHING and return.
                 if resolution < 2.0:
                     print(f"\n✓ Found excellent structure (< 2.0Å): {pdb_id} ({resolution}Å)")
