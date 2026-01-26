@@ -636,8 +636,58 @@ class ProteinPipelineBatch:
 
 if __name__ == "__main__":
     protein_list = [
-    "AKT1"
+    # 1. CANCER (PDAC)
+    "KRAS",
+    "PI3K",
+    "mTOR",
+    "MEK1",
+    "MEK2",
+    "RAF1",
+    "CDK4",
+    "STAT3",
+    "NF-κB",
+    "SMAD4",
+    "MCL-1",
+    "PARP1",
+    "EGFR",
+    "HIF-1α",
+    "CDK6",
+
+    # 2. INFLAMMATION TARGETS
+    "COX-2",
+    "5-LOX",
+    "NF-κB",
+    "NLRP3",
+    "iNOS",
+    "Caspase-1",
+    "JAK1",
+    "JAK2",
+    "MAPK14",
+    "TNF-α",
+    "IL-6",
+    "IL-1β",
+    "IL-17A",
+    "TLR4",
+    "PLA2",
+
+    # 3. METABOLIC HEALTH TARGETS
+    "ACC",
+    "FASN",
+    "HMG-CoA reductase",
+    "CPT1A",
+    "AMPK",
+    "PPAR-α",
+    "PPAR-γ",
+    "SREBP-1",
+    "GLP-1 receptor",
+    "DPP-4",
+    "GSK3β",
+    "IRS-1",
+    "Leptin receptor",
+    "Adiponectin receptor (AdipoR1)",
+    "TNF-α"
 ]
 
-    batch_processor = ProteinPipelineBatch(output_base_dir="FDA_drugs")
+
+    batch_processor = ProteinPipelineBatch(output_base_dir="FDA_New_drugs2")
     results = batch_processor.run_batch(protein_list)
